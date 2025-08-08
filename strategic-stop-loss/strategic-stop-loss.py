@@ -1,6 +1,8 @@
 import gurobipy as gp
 from tabulate import tabulate
 from gurobipy import GRB
+from black_scholes import calculate_price_probability
+from solution_visualization import visualize_stop_loss_strategy
 
 # --- Parameters ---
 total_shares = 3280
@@ -9,7 +11,7 @@ initial_capital = total_shares * avg_price
 target_loss_percentage = 0.10
 target_loss = initial_capital * target_loss_percentage
 layers = ['A', 'B', 'C', 'D']
-target_at_c_layer = 0.6
+target_at_c_layer = 0.65
 
 # --- Create Gurobi Model ---
 m = gp.Model("StopLossStrategy")
@@ -27,19 +29,19 @@ m.setObjective(
 )
 
 # --- Constraints ---
-# All previous constraints are kept
-m.addConstr(gp.quicksum(s[i] for i in layers) == total_shares, "TotalShares")
+m.addConstr(
+    gp.quicksum(s[i] for i in layers) == total_shares, "TotalShares")
 m.addConstr(s['B'] >= s['A'] + 1, "Hierarchy_B")
 m.addConstr(s['C'] >= s['B'] + 1, "Hierarchy_C")
 m.addConstr(s['D'] >= s['C'] + 1, "Hierarchy_D")
 m.addConstr(
     gp.quicksum(s[i] * (avg_price - p[i]) for i in layers) == target_loss,
     "CumulativeLoss")
-# m.addConstr((s['A'] * p['A']) == 100, "LayerAPreservation")
+
 m.addConstr((s['A'] * p['A']) + (s['B'] * p['B']) +
             (s['C'] * p['C']) >= target_at_c_layer * initial_capital,
             "CapitalPreservation")
-# m.addConstr(p['A'] <= avg_price * 0.98, "PriceUpperBound_A")
+
 m.addConstr(p['A'] <= 5.85, "PriceUpperBound_A")
 
 max_loss_per_layer = 1000
@@ -68,12 +70,13 @@ m.optimize()
 
 # --- Print the results and Verification ---
 if m.Status == GRB.OPTIMAL:
-    print("\n--- Optimal Stop-Loss Strategy (Full 5% Price Gaps) ---")
+    print("\n--- Optimal Stop-Loss Strategy ---\n")
 
     total_loss_check = 0
     all_data = list()
     remaining_shares = total_shares
     preserve_capital = 0
+    final = dict()
     for i in layers:
         shares = round(s[i].X)
         price = float("{:.2f}".format(p[i].X))
@@ -92,9 +95,19 @@ if m.Status == GRB.OPTIMAL:
             "MarketValue": remaining_shares * price
         }
 
+        final[f"Layer {i}"] = {
+            "shares": shares,
+            "price": price
+        }
+
         all_data.append(_new_data)
 
     print(tabulate(all_data, headers="keys", tablefmt="fancy_grid"))
+
+    print("\n" + "=" * 20 + " PROBABILITY " + "=" * 20)
+
+    calculate_price_probability([float(final[i]['price']) for i in final])
+    visualize_stop_loss_strategy(final)
 
     print("\n" + "=" * 20 + " VERIFICATION " + "=" * 20)
     print(f"Initial Capital: ${initial_capital:.2f}")

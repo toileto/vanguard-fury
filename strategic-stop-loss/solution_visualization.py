@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-def visualize_stop_loss_strategy():
+def visualize_stop_loss_strategy(solution_data):
     """
     Visualizes the stop-loss strategy problem and solution.
 
@@ -18,12 +18,12 @@ def visualize_stop_loss_strategy():
 
     # --- Replace this with your actual Gurobi output ---
     # Plausible Solution Data
-    solution_data = {
-        'Layer A': {'shares': 818, 'price': 5.81},
-        'Layer B': {'shares': 819, 'price': 5.69},
-        'Layer C': {'shares': 821, 'price': 5.52},
-        'Layer D': {'shares': 822, 'price': 5.35}
-    }
+    # solution_data = {
+    #     'Layer A': {'shares': 818, 'price': 5.81},
+    #     'Layer B': {'shares': 819, 'price': 5.69},
+    #     'Layer C': {'shares': 821, 'price': 5.52},
+    #     'Layer D': {'shares': 822, 'price': 5.35}
+    # }
     # ----------------------------------------------------
 
     # --- 2. Process Data for Plotting ---

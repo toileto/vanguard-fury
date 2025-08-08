@@ -49,11 +49,11 @@ class AVHelper:
         return result
 
 
-if __name__ == '__main__':
+def calculate_price_probability(stop_loss_prices: list):
     alphav = AVHelper()
     lookback_period = 10
     forward_horizon_days = 5
-    stop_loss_prices = [5.98, 5.81, 5.69, 5.52, 5.35]
+    # stop_loss_prices = [5.98, 5.81, 5.69, 5.52, 5.35]
     data = alphav.get_price_data(
         "ULTY",
         lookback_period=lookback_period
