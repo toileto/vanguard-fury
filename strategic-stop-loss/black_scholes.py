@@ -1,107 +1,114 @@
-from zoneinfo import ZoneInfo
-from scipy.stats import norm
-from tabulate import tabulate
-from datetime import datetime, timedelta
-
-import pandas as pd
-import numpy as np
 import os
 import requests
-
-
-def unix_timestamp_from_date(date, format='%Y-%m-%d'):
-    '''Transform human readable date string to UNIX timestamp'''
-    return int(
-        datetime.strptime(date, format)
-        .replace(tzinfo=ZoneInfo('US/Eastern'))
-        .timestamp()
-    )
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+from tabulate import tabulate
 
 
 class AVHelper:
+    """A helper class to fetch data from the Alpha Vantage API."""
+
     def __init__(self):
-        self.api_key = os.environ['ALPHA_VANTAGE_API_KEY']
-        pass
+        self.api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
+        if not self.api_key:
+            raise ValueError(
+                "ALPHA_VANTAGE_API_KEY environment variable not set.")
+        self.base_url = 'https://www.alphavantage.co/query'
 
-    def get_price_data(self, ticker, function="TIME_SERIES_DAILY",
-                       lookback_period=20):
-        url = (f'https://www.alphavantage.co/query?function={function}'
-               f'&symbol={ticker}&apikey={self.api_key}')
-        r = requests.get(url)
-        data = r.json().get('Time Series (Daily)')
-        result = []
-        i = 0
-        for date, values in data.items():
-            if i != lookback_period:
-                entry = {
-                    'date': date,
-                    'open': float(values['1. open']),
-                    'high': float(values['2. high']),
-                    'low': float(values['3. low']),
-                    'close': float(values['4. close']),
-                    'volume': float(values['5. volume'])
-                }
-                result.append(entry)
-                i += 1
-            else:
-                break
+    def get_price_data(self, ticker, lookback_period=20):
+        """
+        Fetches daily price data for a given stock ticker.
 
-        return result
+        Args:
+            ticker (str): The stock symbol (e.g., 'ULTY').
+            lookback_period (int): The number of recent trading days to fetch.
+
+        Returns:
+            list: A list of dictionaries containing daily price data, or None on failure.
+        """
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": ticker,
+            "apikey": self.api_key,
+            "outputsize": "compact"
+        }
+        try:
+            r = requests.get(self.base_url, params=params, timeout=10)
+            r.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            data = r.json()
+            if "Time Series (Daily)" not in data:
+                print(
+                    f"Error: Could not find time series data for {ticker}. API response: {data}")
+                return None
+        except requests.exceptions.RequestException as e:
+            print(f"Network or API error occurred: {e}")
+            return None
+
+        time_series = data.get('Time Series (Daily)', {})
+
+        # Convert dictionary to list and slice to the lookback period
+        result = [
+            {'date': date, 'close': float(values['4. close'])}
+            for date, values in time_series.items()
+        ]
+        return result[:lookback_period]
 
 
-def calculate_price_probability(stop_loss_prices: list):
+def calculate_price_probability(prices: list, ticker: str, lookback_days: int,
+                                horizon_days: int):
+    """
+    Calculates the probability of a stock's price falling below given stop-loss levels.
+
+    Args:
+        prices (list): A list of stop-loss price points to evaluate.
+        ticker (str): The stock ticker symbol.
+        lookback_days (int): How many past days of data to use for volatility calculation.
+        horizon_days (int): The future time frame (in days) for the probability calculation.
+    """
     alphav = AVHelper()
-    lookback_period = 10
-    forward_horizon_days = 5
-    # stop_loss_prices = [5.98, 5.81, 5.69, 5.52, 5.35]
-    data = alphav.get_price_data(
-        "ULTY",
-        lookback_period=lookback_period
-    )
+    data = alphav.get_price_data(ticker, lookback_period=lookback_days)
+
+    if not data or len(data) < 2:
+        print(
+            "Could not retrieve sufficient price data to calculate probability.")
+        return
 
     df = pd.DataFrame(data)
-    
-    # Calculate daily logarithmic returns
-    log_returns = np.log(df["close"] / df["close"].shift(1))
 
-    # Calculate annualized volatility (sigma) from historical data
-    volatility = log_returns.std() * np.sqrt(252)  # 252 trading days in a year
+    # --- 1. Calculate Historical Volatility ---
+    # Use logarithmic returns for a more accurate volatility measure
+    log_returns = np.log(df["close"] / df["close"].shift(
+        -1))  # Shift -1 because data is newest first
+    volatility = log_returns.std() * np.sqrt(252)  # Annualized volatility
 
-    # Get the current stock price (S)
     current_price = df["close"].iloc[0]
+    time_in_years = horizon_days / 252.0
 
-    # Convert time horizon to years for the formula
-    time_in_years = forward_horizon_days / 252.0
+    # --- 2. Calculate Probability for Each Price ---
+    # This formula, derived from the lognormal distribution of stock prices, calculates
+    # the probability of the price being below a certain level. It's related to the
+    # 'd2' term in the Black-Scholes options pricing model.
+    # We assume a drift of 0 to focus purely on volatility.
 
-    # 2. Calculate the probability
-    # We use a formula derived from the lognormal distribution properties.
-    # It calculates the probability of the price being below the stop_loss_price.
-    # Here, we assume the expected return (drift) is zero to focus purely on volatility.
+    results_data = []
+    for stop_price in prices:
+        # Calculate d2 from the Black-Scholes model
+        d2 = (np.log(current_price / stop_price)) / (
+                    volatility * np.sqrt(time_in_years))
 
-    # This term is similar to 'd2' in the Black-Scholes model
-    all_data = list()
-    for stop_loss_price in stop_loss_prices:
-        d2 = (np.log(
-            current_price / stop_loss_price) - 0.5 * volatility ** 2 * time_in_years) / (
-                         volatility * np.sqrt(time_in_years))
-
-        # The cumulative distribution function (CDF) of d2 gives us the probability
-        # of the price ending up *above* the stop-loss.
+        # The CDF of d2 gives the probability of the price being *above* the stop price.
         prob_above = norm.cdf(d2)
-
-        # Therefore, 1 minus that is the probability of it being *below* the stop-loss.
         prob_below = 1 - prob_above
 
-        all_data.append({
-            "stop_loss_price": f"${stop_loss_price:.2f}",
-            "prob_above": f"{prob_above:.2%}",
-            "prob_below": f"{prob_below:.2%}"
+        results_data.append({
+            "Stop-Loss Price": f"${stop_price:.2f}",
+            f"Prob. Above (in {horizon_days} days)": f"{prob_above:.2%}",
+            f"Prob. Below (in {horizon_days} days)": f"{prob_below:.2%}"
         })
 
-    # 3. Display the results
-    print(f"Current Stock Price [from data]:      ${current_price:,.2f}")
-    print(f"Calculated Volatility [from data]:    {volatility * 100:.2f}%")
-
-    print(tabulate(all_data, headers="keys", tablefmt="fancy_grid"))
-
-    print("-" * 42)
+    # --- 3. Display Results ---
+    print(f"Current {ticker} Price: ${current_price:,.2f} (from latest data)")
+    print(
+        f"Annualized Volatility: {volatility:.2%} (from last {len(data)} days)")
+    print(tabulate(results_data, headers="keys", tablefmt="fancy_grid"))
