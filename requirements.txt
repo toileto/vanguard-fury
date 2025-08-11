@@ -4,3 +4,4 @@ ortools == 9.14.*
 matplotlib == 3.9.*
 scipy
 tabulate
+finnhub-python

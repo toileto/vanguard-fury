@@ -1,7 +1,7 @@
 import gurobipy as gp
 from gurobipy import GRB
 from tabulate import tabulate
-from black_scholes import calculate_price_probability
+from black_scholes import monte_carlo_stop_loss_probability
 from solution_visualization import visualize_stop_loss_strategy
 
 
@@ -116,12 +116,24 @@ def process_and_display_results(model, config):
     # --- Display Probability and Verification ---
     print("\n" + "=" * 20 + " PROBABILITY ANALYSIS " + "=" * 20)
     stop_loss_prices = [val['price'] for val in solution_data.values()]
-    calculate_price_probability(
-        prices=stop_loss_prices,
-        ticker=config['ticker'],
-        lookback_days=20,
-        horizon_days=3
+    stats_data, ohlc_paths = monte_carlo_stop_loss_probability(
+        stop_loss=stop_loss_prices,
+        time_horizon_days=[5, 10, 20],
+        distribution_per_share=0.10,
+        distribution_frequency_days=5,
+        n_simulations=10000,
+        volatility_method='garman_klass',
+        intraday_steps=0  # Set to 390 for OHLC output
     )
+
+    # Print results
+
+    if stats_data:
+        print(tabulate(stats_data, headers='keys', tablefmt='fancy_grid'))
+
+    if ohlc_paths:
+        print("Sample OHLC path (first simulation, first day):",
+              ohlc_paths[0][0])
 
     print("\n" + "=" * 24 + " VERIFICATION " + "=" * 24)
     print(f"Initial Capital: ${initial_capital:,.2f}")
