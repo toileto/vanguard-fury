@@ -1,13 +1,9 @@
 import os
-import requests
-import numpy as np
-import pandas as pd
-import finnhub
-from matplotlib import ticker
-from scipy.stats import norm
-from tabulate import tabulate
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
+
+import numpy as np
+import requests
 
 
 class StockData:
@@ -231,7 +227,7 @@ def monte_carlo_stop_loss_probability(
     for _stop_loss in stop_loss:
         for _time in time_horizon_days:
             # Time step
-            dt = 1 / 252
+            dt = 1
             hit_stop_loss = np.zeros(n_simulations, dtype=bool)
             final_prices = np.zeros(n_simulations)
             ohlc_paths = [] if intraday_steps > 0 else None
@@ -245,9 +241,8 @@ def monte_carlo_stop_loss_probability(
                         for _ in range(intraday_steps - 1):
                             z = np.random.normal(0, 1)
                             intraday_prices.append(intraday_prices[-1] * np.exp(
-                                (daily_drift - 0.5 * daily_volatility ** 2) * (
-                                            dt / intraday_steps) +
-                                daily_volatility * np.sqrt(dt / intraday_steps) * z
+                                (daily_drift - 0.5 * daily_volatility ** 2) +
+                                daily_volatility * z
                             ))
                         o = intraday_prices[0]
                         h = np.max(intraday_prices)

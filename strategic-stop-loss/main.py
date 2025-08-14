@@ -1,7 +1,8 @@
 import gurobipy as gp
 from gurobipy import GRB
+from monte_carlo import monte_carlo_stop_loss_probability
 from tabulate import tabulate
-from black_scholes import monte_carlo_stop_loss_probability
+
 from solution_visualization import visualize_stop_loss_strategy
 
 
