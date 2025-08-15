@@ -13,13 +13,11 @@ class VanguardFury:
 
     def __init__(self, ticker, historical_price):
         self.ticker = ticker
-        self.api_key = os.environ['STOCKDATA_API_KEY']
-        if not self.api_key:
-            raise ValueError("STOCKDATA_API_KEY environment variable not set")
-        self.stockdata_base_url = "https://api.stockdata.org/v1/data/"
-        # self.price_data = self.get_price_data()
-        self.price_data = historical_price
-        pass
+        # self.api_key = os.environ['STOCKDATA_API_KEY']
+        # if not self.api_key:
+        #     raise ValueError("STOCKDATA_API_KEY environment variable not set")
+        # self.stockdata_base_url = "https://api.stockdata.org/v1/data/"
+        self.price_data = historical_price  # Use provided historical price directly
 
     def hit_stockdata_api(self, url: str) -> List[Dict]:
         """
@@ -55,26 +53,20 @@ class VanguardFury:
         Fetch historical OHLCV data for a given stock symbol.
 
         Args:
-            symbol: Stock ticker symbol
             lookback_period: Number of days to fetch (default: 20)
 
         Returns:
             List of dictionaries with OHLCV data, sorted by date (newest first)
 
         Raises:
-            ValueError: If symbol is invalid, lookback_period is non-positive, or API request fails
+            ValueError: If lookback_period is non-positive or API request fails
         """
-
         if lookback_period <= 0:
             raise ValueError("Lookback period must be positive")
 
-        url = (
-            f"{self.stockdata_base_url}eod?symbols={self.ticker}"
-            f"&api_token={self.api_key}"
-        )
+        url = f"{self.stockdata_base_url}eod?symbols={self.ticker}&api_token={self.api_key}"
         raw_data = self.hit_stockdata_api(url)
 
-        # Transform and validate data
         required_keys = {'close', 'low', 'open', 'high', 'volume', 'date'}
         data = []
         for item in raw_data:
@@ -89,12 +81,7 @@ class VanguardFury:
                 "date": item['date'].split('T')[0]
             })
 
-        # Sort by date in descending order
-        data.sort(
-            key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d'),
-            reverse=True
-        )
-
+        data.sort(key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d'), reverse=True)
         return data[:lookback_period]
 
     def optimise_stop_loss(self, total_shares: int, avg_price: float,
@@ -109,13 +96,10 @@ class VanguardFury:
                           layer_steps: List[float] = [0.02, 0.04, 0.03],
                           minimum_shares_per_layer: float = None
                           ):
-
         # Make up parameters
         initial_capital = avg_price * total_shares
 
-        layers = list()
-        for i in range(num_layers):
-            layers.append(str(i+1))
+        layers = [str(i + 1) for i in range(num_layers)]
 
         if minimum_shares_per_layer is None:
             minimum_shares_per_layer = 0.15 * total_shares
@@ -123,10 +107,9 @@ class VanguardFury:
         if price_upper_bound is None:
             price_upper_bound = 0.95 * avg_price
 
-
         # Validate input
         if not max_loss_per_layer:
-            raise ValueError("max_loss_per_layer can not be empty...")
+            raise ValueError("max_loss_per_layer cannot be empty...")
 
         if not total_shares:
             raise ValueError("Total shares cannot be empty...")
@@ -136,32 +119,26 @@ class VanguardFury:
 
         if capital_preservation_layer > num_layers:
             raise ValueError(
-                "Capital preservation layer cannot be "
-                "greater than number of layers..."
+                "Capital preservation layer cannot be greater than number of layers..."
             )
-        else:
-            capital_preservation_layer = layers[capital_preservation_layer]
 
         if capital_preservation_target >= 1:
-            raise ValueError("Capital preservation target cannot be greater "
-                             "than or equal to 1...")
+            raise ValueError("Capital preservation target cannot be greater than or equal to 1...")
 
         if method not in ['sizing_up', 'sizing_down']:
-            raise ValueError(
-                "Method must be either sizing_up or sizing_down...")
+            raise ValueError("Method must be either sizing_up or sizing_down...")
 
         if len(layer_steps) != (num_layers - 1):
-            raise ValueError("Length of layer_step must"
-                             " be equal to number of layers - 1...")
+            raise ValueError("Length of layer_steps must be equal to number of layers - 1...")
 
         target_loss = target_loss_percentage * initial_capital
         if not layers or len(layers) < 2:
             raise ValueError("At least two layers are required")
 
-        # --- 2. Initialize Pyomo model ---
+        # Initialize Pyomo model
         model = pyo.ConcreteModel("StopLossStrategy")
 
-        # --- 3. Define Sets and Decision Variables ---
+        # Define Sets and Decision Variables
         model.LAYERS = pyo.Set(initialize=layers, ordered=True)
 
         model.shares = pyo.Var(model.LAYERS, domain=pyo.NonNegativeIntegers,
@@ -171,16 +148,16 @@ class VanguardFury:
                                bounds=(0.01, None),
                                name="prices")
 
-        # --- 4. Define the Objective Function ---
-        objective_expr = sum(
-            model.shares[layer] * model.prices[layer] for layer in model.LAYERS)
-        model.objective = pyo.Objective(expr=objective_expr, sense=pyo.maximize)
+        # Define the Objective Function
+        model.objective = pyo.Objective(
+            expr=sum(model.shares[layer] * model.prices[layer] for layer in model.LAYERS),
+            sense=pyo.maximize
+        )
 
-        # --- 5. Define Constraints (same as original) ---
+        # Define Constraints
         # Total Shares Constraint
         model.total_shares_constr = pyo.Constraint(
-            expr=sum(
-                model.shares[layer] for layer in model.LAYERS) == total_shares
+            expr=sum(model.shares[layer] for layer in model.LAYERS) == total_shares
         )
 
         # Layer Hierarchy Constraints
@@ -201,122 +178,77 @@ class VanguardFury:
 
         # Cumulative Loss Constraint
         model.cumulative_loss_constr = pyo.Constraint(
-            expr=sum(model.shares[layer] * (avg_price - model.prices[layer]) for
-                     layer in model.LAYERS) == target_loss
+            expr=sum(model.shares[layer] * (avg_price - model.prices[layer]) for layer in model.LAYERS) == target_loss
         )
 
         # Capital Preservation Constraint
         if capital_preservation:
-            if capital_preservation_layer not in layers:
-                raise ValueError(
-                    "capital_preservation_layer must be one of the layers")
-            layer_index = ordered_layers.index(capital_preservation_layer) + 1
-            layers_to_sum = ordered_layers[:layer_index]
+            # Use integer index (0-based) for slicing
+            cap_layer_index = capital_preservation_layer - 1  # Convert 1-based to 0-based
+            if cap_layer_index < 0 or cap_layer_index >= len(ordered_layers):
+                raise ValueError("Capital preservation layer index out of range")
             model.capital_preservation_constr = pyo.Constraint(
-                expr=sum(model.shares[layer] * model.prices[layer] for layer in
-                         layers_to_sum) >=
+                expr=sum(model.shares[layer] * model.prices[layer] for layer in ordered_layers[:cap_layer_index + 1]) >=
                      capital_preservation_target * initial_capital
             )
 
-        # Price Upper Bound Constraint
-        if price_upper_bound:
-            first_layer = ordered_layers[0]
-            model.price_upper_bound_constr = pyo.Constraint(
-                expr=model.prices[first_layer] <= price_upper_bound
+        # Max Loss per Layer Constraint
+        model.max_loss_constr = pyo.ConstraintList()
+        for layer in model.LAYERS:
+            model.max_loss_constr.add(
+                model.shares[layer] * (avg_price - model.prices[layer]) <= max_loss_per_layer
             )
 
-        # Max Loss Per Layer Constraint
-        def max_loss_rule(model, layer):
-            return model.shares[layer] * (
-                    avg_price - model.prices[layer]) <= max_loss_per_layer
-
-        if max_loss_per_layer:
-            model.max_loss_constr = pyo.Constraint(model.LAYERS,
-                                                   rule=max_loss_rule)
+        # Price Upper Bound for First Layer
+        model.price_upper_bound_constr = pyo.Constraint(
+            expr=model.prices[ordered_layers[0]] <= price_upper_bound
+        )
 
         # Price Gap Constraints
         model.price_gap_constr = pyo.ConstraintList()
-        if layer_steps and len(layer_steps) >= len(layers) - 1:
-            for i in range(1, len(ordered_layers)):
-                prev_layer = ordered_layers[i - 1]
-                curr_layer = ordered_layers[i]
-                model.price_gap_constr.add(
-                    model.prices[curr_layer] <= model.prices[prev_layer] * (
-                            1 - layer_steps[i - 1])
-                )
+        for i in range(1, len(ordered_layers)):
+            prev_layer = ordered_layers[i - 1]
+            curr_layer = ordered_layers[i]
+            model.price_gap_constr.add(
+                model.prices[curr_layer] <= model.prices[prev_layer] - (model.prices[prev_layer] * layer_steps[i-1])
+            )
 
-        # --- 6. Solve the Model ---
+        # Solve the model
         solver = SolverFactory('gurobi')
-        solver.options['NonConvex'] = 2
+        results = solver.solve(model)
 
-        print("\nSolving the Pyomo model with Gurobi...")
-        results = solver.solve(model, tee=False)
-
-        # --- 7. Check Solution, Display, and Format Results ---
-        if (results.solver.status == SolverStatus.ok) and (
-                results.solver.termination_condition == TerminationCondition.optimal):
-            print("Optimal solution found!")
-
-            solution_list = []
-            for layer_name in model.LAYERS:
-                solution_list.append({
-                    'layer': layer_name,
-                    'shares': int(round(pyo.value(model.shares[layer_name]))),
-                    'price': round(pyo.value(model.prices[layer_name]),
-                                           2)
-                })
-
-            return solution_list
-
+        if (results.solver.status == SolverStatus.ok and
+            results.solver.termination_condition == TerminationCondition.optimal):
+            # Extract results
+            layer_data = {}
+            for layer in model.LAYERS:
+                layer_data[layer] = {
+                    'shares': pyo.value(model.shares[layer]),
+                    'price': pyo.value(model.prices[layer])
+                }
+            return layer_data
         else:
-            print(f"Solver did not find an optimal solution.")
-            print(f"Solver Status: {results.solver.status}")
-            print(
-                f"Termination Condition: {results.solver.termination_condition}")
-            # Raise an error or return an empty list if no solution is found
-            print(f"{self.RED_TERM}Problems can not be solved with such "
-                  f"condition...")
-
-    def calculate_nav_erosion(self, prices: List[float]) -> float:
-        """
-        Calculate annualized NAV erosion from a list of prices.
-
-        Args:
-            prices: List of prices in chronological order
-
-        Returns:
-            Annualized NAV erosion rate (decimal)
-
-        Raises:
-            ValueError: If fewer than two prices are provided
-        """
-        if len(prices) < 2:
-            raise ValueError("At least two prices are required to calculate NAV erosion")
-
-        prices = np.array(prices)
-        total_log_return = np.log(prices[-1] / prices[0])
-        num_days = len(prices) - 1
-        return np.exp(total_log_return * (252 / num_days)) - 1 if num_days > 0 else 0.0
+            raise ValueError(f"Solver failed with status: {results.solver.status}, "
+                             f"termination condition: {results.solver.termination_condition}")
 
     def estimate_volatility(self, price_data: List[Dict], method: str = 'garman_klass') -> float:
         """
         Estimate daily volatility from OHLCV data.
 
         Args:
-            price_data: List of dictionaries with 'open', 'high', 'low', 'close' keys
+            price_data: List of dictionaries with OHLCV data
             method: Volatility estimation method ('garman_klass' or 'parkinson', default: 'garman_klass')
 
         Returns:
             Daily volatility (decimal)
 
         Raises:
-            ValueError: If fewer than two entries or invalid method
+            ValueError: If invalid method or insufficient data
             KeyError: If required OHLC keys are missing
         """
+        required_keys = {'open', 'high', 'low', 'close'}
         if len(price_data) < 2:
             raise ValueError("At least two OHLCV entries are required")
-
-        required_keys = {'open', 'high', 'low', 'close'}
         if not all(key in price_data[0] for key in required_keys):
             raise KeyError(f"OHLCV data must contain keys: {required_keys}")
 
@@ -385,8 +317,8 @@ class VanguardFury:
             daily_drift = theoretical_drift
 
         # Combine drifts if both are used
-        if use_historical and use_theoretical and historical_drift is not None and theoretical_drift is not None:
-            daily_drift = (historical_drift + theoretical_drift) / 2
+        if use_historical and use_theoretical and 'historical_drift' in results and 'theoretical_drift' in results:
+            daily_drift = (results["historical_drift"] + results["theoretical_drift"]) / 2
             results["combined_drift"] = daily_drift
 
         if daily_drift is None:
@@ -403,25 +335,21 @@ class VanguardFury:
             n_simulations: int = 10000,
             volatility_method: str = 'garman_klass',
             intraday_steps: int = 0,
-    ) -> Tuple[List[Dict], Optional[List[np.ndarray]]]:
+    ) -> Dict:
         """
-        Perform Monte Carlo simulation to estimate stop-loss trigger probabilities.
+        Perform Monte Carlo simulation to estimate target price probability.
 
         Args:
-            price: List of dictionaries with OHLCV data
-            stop_loss: List of stop-loss prices
-            time_horizon_days: List of time horizons in days (e.g., [5, 10, 20])
+            target_price: Target price level
             distribution_per_share: Distribution amount per share
             distribution_frequency_days: Days between distributions
+            time_horizon_days: Simulation horizon in days (default: 5)
             n_simulations: Number of simulation paths (default: 10000)
             volatility_method: Volatility estimation method ('garman_klass' or 'parkinson', default: 'garman_klass')
             intraday_steps: Number of intraday steps for OHLC simulation (default: 0)
-            result_mode: Output format ('compact' or 'detailed', default: 'compact')
 
         Returns:
-            Tuple containing:
-            - List of probability statistics (compact or detailed format)
-            - List of simulated OHLC paths (if intraday_steps > 0, else None)
+            Dictionary with probability statistics
 
         Raises:
             ValueError: If inputs are invalid or insufficient data
@@ -430,67 +358,32 @@ class VanguardFury:
 
         price = self.price_data
 
-        # if not price or 'close' not in price[0]:
-        #     raise KeyError("Price data must contain 'close' key")
-        if not target_price or not time_horizon_days:
-            raise ValueError("Stop-loss prices and time horizons cannot be empty")
+        if not price or 'close' not in price[0]:
+            raise KeyError("Price data must contain 'close' key")
         if distribution_per_share < 0 or distribution_frequency_days <= 0:
             raise ValueError("Distribution parameters must be positive")
-        if n_simulations <= 0:
-            raise ValueError("Number of simulations must be positive")
+        if n_simulations <= 0 or time_horizon_days <= 0:
+            raise ValueError("Number of simulations and horizon must be positive")
 
         current_price = price[0]['close']
-        daily_volatility = self.estimate_volatility(price,
-                                                    method=volatility_method)
-        daily_drift, _ = self.calculate_daily_drift(price,
-                                                    use_historical=True,
-                                                    use_theoretical=True)
+        daily_volatility = self.estimate_volatility(price, method=volatility_method)
+        daily_drift, _ = self.calculate_daily_drift(price, use_historical=True, use_theoretical=True)
 
-        hit_stop_loss = np.zeros(n_simulations, dtype=bool)
-        final_prices = np.zeros(n_simulations)
-        ohlc_paths = [] if intraday_steps > 0 else None
+        # Vectorized Monte Carlo
+        Z = np.random.normal(0, 1, (time_horizon_days, n_simulations))
+        increments = daily_drift + daily_volatility * Z  # Corrected GBM formula
+        log_paths = np.cumsum(increments, axis=0)
+        paths = current_price * np.exp(log_paths)
 
-        for i in range(n_simulations):
-            price = current_price
-            path_ohlc = [] if intraday_steps > 0 else None
+        # Apply distributions
+        for t in range(distribution_frequency_days - 1, time_horizon_days, distribution_frequency_days):
+            paths[t:, :] = np.maximum(paths[t:, :] - distribution_per_share, 0)
 
-            for t in range(time_horizon_days):
-                if intraday_steps > 0:
-                    intraday_prices = np.zeros(intraday_steps)
-                    intraday_prices[0] = price
-                    for j in range(1, intraday_steps):
-                        z = np.random.normal(0, 1)
-                        intraday_prices[j] = intraday_prices[j-1] * np.exp(
-                            (daily_drift - 0.5 * daily_volatility ** 2) +
-                            daily_volatility * z
-                        )
-                    path_ohlc.append([
-                        intraday_prices[0],
-                        np.max(intraday_prices),
-                        np.min(intraday_prices),
-                        intraday_prices[-1]
-                    ])
-                    price = intraday_prices[-1]
-                else:
-                    z = np.random.normal(0, 1)
-                    price *= np.exp(
-                        (daily_drift - 0.5 * daily_volatility ** 2) +
-                        daily_volatility * np.sqrt(1) * z
-                    )
+        # Check for target hit (below or equal)
+        hit_target = np.any(paths <= target_price, axis=0)
+        probability = np.mean(hit_target) * 100
 
-                if (t + 1) % distribution_frequency_days == 0:
-                    price = max(price - distribution_per_share, 0)
-
-                if price <= target_price:
-                    hit_stop_loss[i] = True
-                    break
-
-            final_prices[i] = price
-            if path_ohlc:
-                ohlc_paths.append(np.array(path_ohlc))
-
-        probability = np.mean(hit_stop_loss) * 100
-
+        final_prices = paths[-1, :]
         stats = {
             "target_price": target_price,
             "time_horizon": time_horizon_days,
