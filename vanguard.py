@@ -17,6 +17,7 @@ class VanguardFury:
         # if not self.api_key:
         #     raise ValueError("STOCKDATA_API_KEY environment variable not set")
         # self.stockdata_base_url = "https://api.stockdata.org/v1/data/"
+        # self.price_data = self.get_price_data()
         self.price_data = historical_price  # Use provided historical price directly
 
     def hit_stockdata_api(self, url: str) -> List[Dict]:
@@ -94,7 +95,11 @@ class VanguardFury:
                           price_upper_bound: float = None,
                           method: str = "sizing_up",
                           layer_steps: List[float] = [0.02, 0.04, 0.03],
-                          minimum_shares_per_layer: float = None
+                          minimum_shares_per_layer: float = None,
+                          distribution_per_share:float = 0,
+                          distribution_frequency_days: int = 0,
+                          n_simulations:int = 100000,
+                          intraday_steps:int = 0
                           ):
         # Make up parameters
         initial_capital = avg_price * total_shares
@@ -220,12 +225,53 @@ class VanguardFury:
         if (results.solver.status == SolverStatus.ok and
             results.solver.termination_condition == TerminationCondition.optimal):
             # Extract results
-            layer_data = {}
+            layer_data = list()
+            _all_shares = total_shares
+            _initial_capital = initial_capital
+            _preserved_cash = 0
+            _total_loss = 0
             for layer in model.LAYERS:
-                layer_data[layer] = {
-                    'shares': pyo.value(model.shares[layer]),
-                    'price': pyo.value(model.prices[layer])
+                shares = pyo.value(model.shares[layer])
+                price = pyo.value(model.prices[layer])
+                loss = shares * (avg_price - price)
+                _total_loss += loss
+                _all_shares -= shares
+                _initial_capital -= loss
+                _preserved_cash =+ (shares * price)
+                _remaining_market_value = _all_shares * price
+
+                _data = {
+                    'layer': layer,
+                    'shares': shares,
+                    'price': price,
+                    'loss': loss,
+                    'total_loss': _total_loss,
+                    'remaining_shares': _all_shares,
+                    'remaining_market_value': _remaining_market_value,
+                    'preserved_cash': _preserved_cash,
                 }
+
+                _data_full_stats = list()
+
+                for _horizon in [5, 10, 20, 30]:
+                    _probability_data = self.calculate_target_price_probability(
+                        target_price=price,
+                        distribution_per_share=distribution_per_share,
+                        distribution_frequency_days=distribution_frequency_days,
+                        time_horizon_days=_horizon,
+                        n_simulations=n_simulations,
+                        intraday_steps=0
+                    )
+
+                    _data_full_stats.append(_probability_data)
+
+                    _data[f'probability_in_{_horizon}_days'] = \
+                        _probability_data.get('probability')
+
+                # _data['full_stats'] = _data_full_stats
+
+                layer_data.append(_data)
+
             return layer_data
         else:
             raise ValueError(f"Solver failed with status: {results.solver.status}, "
@@ -269,6 +315,29 @@ class VanguardFury:
             raise ValueError("Method must be 'garman_klass' or 'parkinson'")
 
         return volatility
+
+    def calculate_nav_erosion(self, prices: List[float]) -> float:
+        """
+        Calculate annualized NAV erosion from a list of prices.
+
+        Args:
+            prices: List of prices in chronological order
+
+        Returns:
+            Annualized NAV erosion rate (decimal)
+
+        Raises:
+            ValueError: If fewer than two prices are provided
+        """
+        if len(prices) < 2:
+            raise ValueError(
+                "At least two prices are required to calculate NAV erosion")
+
+        prices = np.array(prices)
+        total_log_return = np.log(prices[-1] / prices[0])
+        num_days = len(prices) - 1
+        return np.exp(
+            total_log_return * (252 / num_days)) - 1 if num_days > 0 else 0.0
 
     def calculate_daily_drift(self, price_data: List[Dict], risk_free_rate_annual: float = 0.0,
                              use_historical: bool = True, use_theoretical: bool = True) -> Tuple[float, Dict]:
@@ -360,8 +429,9 @@ class VanguardFury:
 
         if not price or 'close' not in price[0]:
             raise KeyError("Price data must contain 'close' key")
-        if distribution_per_share < 0 or distribution_frequency_days <= 0:
-            raise ValueError("Distribution parameters must be positive")
+        if distribution_per_share < 0 or distribution_frequency_days < 0:
+            raise ValueError("Distribution parameters must be positive or at "
+                             "least 0")
         if n_simulations <= 0 or time_horizon_days <= 0:
             raise ValueError("Number of simulations and horizon must be positive")
 
@@ -388,13 +458,14 @@ class VanguardFury:
             "target_price": target_price,
             "time_horizon": time_horizon_days,
             "current_price": current_price,
-            "percent_probability": float(probability),
+            "probability": float(probability),
             "mean_price": float(np.mean(final_prices)),
             "median_price": float(np.median(final_prices)),
             "25th_percentile": float(np.percentile(final_prices, 25)),
             "75th_percentile": float(np.percentile(final_prices, 75)),
-            "volatility_used": daily_volatility,
-            "drift_used": float(daily_drift)
+            "volatility_used": float(daily_volatility),
+            "drift_used": float(daily_drift),
+            # "ohlc_path": paths
         }
 
         return stats

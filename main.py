@@ -1,6 +1,8 @@
+from tabulate import tabulate
 from vanguard import VanguardFury
-import csv
 from typing import List, Dict, Any, Optional
+
+import csv
 
 
 def csv_to_list_of_dicts(csv_file_path: str) -> Optional[List[Dict[str, Any]]]:
@@ -12,6 +14,7 @@ def csv_to_list_of_dicts(csv_file_path: str) -> Optional[List[Dict[str, Any]]]:
 
     Args:
         csv_file_path (str): The path to the input CSV file.
+
 
     Returns:
         Optional[List[Dict[str, Any]]]: A list of dictionaries representing
@@ -55,7 +58,10 @@ def csv_to_list_of_dicts(csv_file_path: str) -> Optional[List[Dict[str, Any]]]:
 
 historical_data = csv_to_list_of_dicts("price.csv")
 
-fury = VanguardFury(ticker="ULTY", historical_price=historical_data)
+fury = VanguardFury(ticker="ULTY",
+                    historical_price=historical_data)
+
+# fury = VanguardFury(ticker="ULTY")
 
 config = {
         'ticker': "ULTY",
@@ -78,7 +84,35 @@ stop_loss = fury.optimise_stop_loss(
     target_loss_percentage=0.11,
     max_loss_per_layer=1000,
     price_upper_bound=5.80,
-    minimum_shares_per_layer=100
+    minimum_shares_per_layer=100,
+    distribution_per_share=0.1,
+    distribution_frequency_days=5,
+    n_simulations = 5000000
 )
 
-print(stop_loss)
+# all_data = list()
+# for _element in stop_loss:
+#     target_price = _element.get('price')
+#     for _horizon in [5, 10, 20, 30]:
+#         all_data.append(
+#             fury.calculate_target_price_probability(
+#                 target_price=target_price,
+#                 distribution_per_share=0.1,
+#                 distribution_frequency_days=5,
+#                 time_horizon_days=_horizon,
+#                 n_simulations=100000,
+#                 intraday_steps=1
+#             )
+#         )
+#
+import json
+print(json.dumps(stop_loss))
+
+"""
+target_price,
+current_price,
+probability_in_5_days,
+probability_in_10_days,
+probability_in_20_days,
+probability_in_30_days,
+"""
